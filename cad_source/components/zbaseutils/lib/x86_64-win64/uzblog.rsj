@@ -1,0 +1,5 @@
+{"version":1,"strings":[
+{"hash":32537107,"name":"uzblog.rslogmodulestate","sourcebytes":[76,111,103,32,109,111,100,117,108,101,32,110,97,109,101,32,34,37,115,34,32,115,116,97,116,101,58,32,37,115],"value":"Log module name \"%s\" state: %s"},
+{"hash":206017268,"name":"uzblog.rsenabled","sourcebytes":[69,110,97,98,108,101,100],"value":"Enabled"},
+{"hash":9934340,"name":"uzblog.rsdisabled","sourcebytes":[68,105,115,97,98,108,101,100],"value":"Disabled"}
+]}

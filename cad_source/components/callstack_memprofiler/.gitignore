@@ -1,0 +1,6 @@
+*.exe
+/viewer/lib
+/viewer/backup
+/example/lib
+/example/backup
+/source/backup

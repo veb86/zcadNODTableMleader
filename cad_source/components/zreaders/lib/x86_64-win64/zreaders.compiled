@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CONFIG>
+  <Lazarus Version="4.99"/>
+  <Compiler Value="C:\fpclaz\pp\bin\x86_64-win64\fpc.exe" Date="1550627949"/>
+  <Params Value="-MObjFPC -Scghi -O2 -g -gl -l -vewnhibq -FuC:\zcad\zcad\cad_source\components\zreaders\ -FuC:\zcad\zcad\cad_source\components\zreaders\src -FuC:\fpclaz\lazarus\packager\units\x86_64-win64 -FUC:\zcad\zcad\cad_source\components\zreaders\lib\x86_64-win64\ zreaders.pas"/>
+</CONFIG>

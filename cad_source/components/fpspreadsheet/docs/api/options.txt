@@ -1,0 +1,10 @@
+css=fpspreadsheet.css
+marker=@@
+implementation-comments=join
+ignore-leading=-
+sort=classes,methods,properties,constants,functions,variables,types
+markdown
+visible-members=protected,public,published
+include=../../source
+include=../../source/common
+include=../../source/visual

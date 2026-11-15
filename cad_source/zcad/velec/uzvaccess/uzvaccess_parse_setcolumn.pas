@@ -1,0 +1,96 @@
+{
+*****************************************************************************
+*                                                                           *
+*  This file is part of the ZCAD                                            *
+*                                                                           *
+*  See the file COPYING.txt, included in this distribution,                 *
+*  for details about the copyright.                                         *
+*                                                                           *
+*  This program is distributed in the hope that it will be useful,          *
+*  but WITHOUT ANY WARRANTY; without even the implied warranty of           *
+*  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.                     *
+*                                                                           *
+*****************************************************************************
+}
+{
+@author(Vladimir Bobrov)
+}
+{$mode objfpc}{$H+}
+
+unit uzvaccess_parse_setcolumn;
+
+{$INCLUDE zengineconfig.inc}
+
+interface
+
+uses
+  SysUtils, uzvaccess_types, uzclog;
+
+// Парсинг инструкции setcolumn
+// Col2 - имя колонки, Col3 - тип данных, Col4 - параметр источника
+procedure ParseSetColumnInstruction(
+  AInstruction: TExportInstructions;
+  const ACol2, ACol3, ACol4: String
+);
+
+implementation
+
+procedure ParseSetColumnInstruction(
+  AInstruction: TExportInstructions;
+  const ACol2, ACol3, ACol4: String
+);
+var
+  mapping: TColumnMapping;
+  hasTemplateMarkers: Boolean;
+begin
+  // Проверка обязательных параметров
+  if (ACol2 = '') or (ACol3 = '') or (ACol4 = '') then
+  begin
+    programlog.LogOutFormatStr(
+      'uzvaccess: Инструкция setcolumn с неполными параметрами - пропускается',
+      [],
+      LM_Info
+    );
+    Exit;
+  end;
+
+  // Создание маппинга колонки
+  mapping := TColumnMapping.Create;
+  mapping.ColumnName := ACol2;
+  mapping.DataType := StringToColumnDataType(ACol3);
+  mapping.SourceParam := ACol4;
+
+  // Проверяем наличие <lnum> плейсхолдера в параметре источника
+  if Pos(LNUM_PLACEHOLDER, ACol4) > 0 then
+  begin
+    mapping.HasLnumPlaceholder := True;
+    programlog.LogOutFormatStr(
+      'uzvaccess: setcolumn - обнаружен %s плейсхолдер, включен режим итерации',
+      [LNUM_PLACEHOLDER],
+      LM_Info
+    );
+  end;
+
+  // Проверяем наличие маркеров составных шаблонов @@[ или <
+  hasTemplateMarkers := (Pos('@@[', ACol4) > 0) or (Pos('<', ACol4) > 0);
+
+  if hasTemplateMarkers then
+  begin
+    mapping.IsTemplate := True;
+    programlog.LogOutFormatStr(
+      'uzvaccess: setcolumn - обнаружен составной шаблон, включен режим парсинга',
+      [],
+      LM_Info
+    );
+  end;
+
+  AInstruction.AddColumnMapping(mapping);
+
+  programlog.LogOutFormatStr(
+    'uzvaccess: setcolumn - колонка: %s, тип: %s, источник: %s, шаблон: %s',
+    [ACol2, ACol3, ACol4, BoolToStr(mapping.IsTemplate, True)],
+    LM_Info
+  );
+end;
+
+end.

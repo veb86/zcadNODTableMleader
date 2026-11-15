@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CONFIG>
+  <Lazarus Version="4.99"/>
+  <Compiler Value="C:\fpclaz\pp\bin\x86_64-win64\fpc.exe" Date="1550627949"/>
+  <Params Value="-MDelphi -Scghi -O1 -g -gl -l -vewnhibq -Fuc:\zcad\zcad\cad_source\components\zcontainers\ -Fuc:\zcad\zcad\cad_source\components\zcontainers\src -FuC:\fpclaz\lazarus\packager\units\x86_64-win64 -FuC:\fpclaz\lazarus\components\lazutils\lib\x86_64-win64 -FUc:\zcad\zcad\cad_source\components\zcontainers\lib\x86_64-win64\ zcontainers.pas"/>
+</CONFIG>

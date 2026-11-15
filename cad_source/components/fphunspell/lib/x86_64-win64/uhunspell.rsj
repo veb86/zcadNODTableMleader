@@ -1,0 +1,7 @@
+{"version":1,"strings":[
+{"hash":69098756,"name":"uhunspell.rsdictionaryfilenotfound","sourcebytes":[68,105,99,116,105,111,110,97,114,121,32,102,105,108,101,32,34,37,115,34,32,110,111,116,32,102,111,117,110,100],"value":"Dictionary file \"%s\" not found"},
+{"hash":80856867,"name":"uhunspell.rsfailedtoloadlibrary","sourcebytes":[70,97,105,108,101,100,32,116,111,32,108,111,97,100,32,108,105,98,114,97,114,121,32,37,115],"value":"Failed to load library %s"},
+{"hash":17315620,"name":"uhunspell.rslibraryloaded","sourcebytes":[76,105,98,114,97,114,121,32,34,37,115,34,32,108,111,97,100,101,100],"value":"Library \"%s\" loaded"},
+{"hash":14567282,"name":"uhunspell.rswronglibrary","sourcebytes":[70,97,105,108,101,100,32,116,111,32,102,105,110,100,32,72,117,110,115,112,101,108,108,95,32,102,117,110,99,116,105,111,110,115,32,105,110,32,34,37,115,34],"value":"Failed to find Hunspell_ functions in \"%s\""},
+{"hash":4336236,"name":"uhunspell.rsgetprocaddresserror","sourcebytes":[71,101,116,80,114,111,99,65,100,100,114,101,115,115,40,37,115,41,61,78,105,108],"value":"GetProcAddress(%s)=Nil"}
+]}

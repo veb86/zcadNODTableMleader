@@ -1,0 +1,75 @@
+name: tests
+
+on: [push, pull_request]
+
+jobs:
+  tests:
+    name: ${{ matrix.config.name }}
+    runs-on: ${{ matrix.config.os }}
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - os: windows-latest
+            name: Windows 64
+            ffi: default default-static
+            laz-url: https://sourceforge.net/projects/lazarus/files/Lazarus%20Windows%2064%20bits/Lazarus%203.8/lazarus-3.8-fpc-3.2.2-win64.exe
+            
+          - os: windows-latest
+            name: Windows 32
+            ffi: stdcall cdecl pascal register stdcall-static cdecl-static pascal-static register-static
+            laz-url: https://sourceforge.net/projects/lazarus/files/Lazarus%20Windows%2032%20bits/Lazarus%203.8/lazarus-3.8-fpc-3.2.2-win32.exe
+
+          - os: ubuntu-latest
+            name: Linux 64
+            ffi: default
+            laz-url: https://sourceforge.net/projects/lazarus/files/Lazarus%20Linux%20amd64%20DEB/Lazarus%203.8/lazarus-project_3.8.0-0_amd64.deb
+            fpc-url: |
+              https://sourceforge.net/projects/lazarus/files/Lazarus%20Linux%20amd64%20DEB/Lazarus%203.6/fpc-laz_3.2.2-210709_amd64.deb
+              https://sourceforge.net/projects/lazarus/files/Lazarus%20Linux%20amd64%20DEB/Lazarus%203.6/fpc-src_3.2.2-210709_amd64.deb
+          
+          - os: macos-15-intel
+            name: Mac
+            ffi: default
+            laz-url: https://sourceforge.net/projects/lazarus/files/Lazarus%20macOS%20x86-64/Lazarus%203.8/lazarus-darwin-x86_64-3.8.zip
+            fpc-url: |
+              https://sourceforge.net/projects/lazarus/files/Lazarus%20macOS%20x86-64/Lazarus%203.8/fpc-3.2.2.intelarm64-macosx.dmg
+
+          - os: macos-15
+            name: Mac Arm
+            ffi: '' # currently has some fails
+            laz-url: https://sourceforge.net/projects/lazarus/files/Lazarus%20macOS%20aarch64/Lazarus%203.8/lazarus-darwin-aarch64-3.8.zip
+            fpc-url: |
+              https://sourceforge.net/projects/lazarus/files/Lazarus%20macOS%20aarch64/Lazarus%203.8/fpc-3.2.2.intelarm64-macosx.dmg
+        
+    steps:
+      - uses: actions/checkout@v4.2.2
+      
+      - name: Install Lazarus
+        uses: ollydev/setup-lazarus@v3.5
+        with:
+          laz-url: ${{ matrix.config.laz-url }}
+          fpc-url: ${{ matrix.config.fpc-url }}
+      
+      - name: Test Lape
+        run: |
+          lazbuild package/lape.lpk
+          lazbuild tests/RunTests/LapeTest.lpi
+          
+          cd tests/RunTests/ && ./LapeTest
+          
+      - name: Test Lape FFI
+        if: ${{ matrix.config.ffi }} != ''
+        run: |
+          cd extensions/ffi/test/
+          
+          for BUILD_MODE in ${{ matrix.config.ffi }}
+          do
+            lazbuild LapeTestFFI.lpi --build-mode=$BUILD_MODE
+            ./LapeTestFFI
+          done || error=1
+          
+          exit $error

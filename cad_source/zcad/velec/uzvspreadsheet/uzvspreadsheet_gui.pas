@@ -1,0 +1,909 @@
+{
+*****************************************************************************
+*                                                                           *
+*  This file is part of the ZCAD                                            *
+*                                                                           *
+*  See the file COPYING.txt, included in this distribution,                 *
+*  for details about the copyright.                                         *
+*                                                                           *
+*  This program is distributed in the hope that it will be useful,          *
+*  but WITHOUT ANY WARRANTY; without even the implied warranty of           *
+*  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.                     *
+*                                                                           *
+*****************************************************************************
+}
+{
+@author(Vladimir Bobrov)
+}
+{$mode objfpc}{$H+}
+
+{** Модуль главной формы визуализации электронных таблиц
+    Отвечает только за отображение интерфейса, без бизнес-логики }
+unit uzvspreadsheet_gui;
+
+{$INCLUDE zengineconfig.inc}
+
+interface
+
+uses
+  Classes,
+  SysUtils,
+  Forms,
+  Controls,
+  Graphics,
+  Grids,
+  ExtCtrls,
+  StdCtrls,
+  ActnList,
+  ComCtrls,
+  fpspreadsheet,
+  fpsTypes,
+  fpsUtils,
+  fpspreadsheetgrid,
+  fpspreadsheetctrls,
+  uzvspreadsheet_cmdregistry,
+  uzcimagesmanager;
+
+const
+  // Размеры по умолчанию для панелей и элементов
+  DEFAULT_CONTROL_PANEL_HEIGHT = 40;
+  DEFAULT_CELL_INFO_HEIGHT = 30;
+  DEFAULT_CELL_ADDRESS_WIDTH = 80;
+  DEFAULT_CELL_CONTENT_MIN_WIDTH = 200;
+
+  // Имена параметров для сохранения состояния
+  SPREADSHEET_PANEL_CONTROL = 'SpreadSheet_PanelControl';
+  SPREADSHEET_PANEL_SHEET = 'SpreadSheet_PanelSheet';
+
+  // Размеры полей размеров ячейки на панели инструментов (issue #1359)
+  DIMENSION_LABEL_WIDTH = 90;   // Ширина подписи поля
+  DIMENSION_EDIT_WIDTH = 55;    // Ширина одного поля ввода значения
+  // Формат вывода размеров (мм / единицы чертежа) с двумя знаками
+  DIMENSION_VALUE_FORMAT = '%.2f';
+
+type
+  { TuzvSpreadsheetForm }
+  { Главная форма модуля визуализации электронных таблиц }
+  TuzvSpreadsheetForm = class(TForm)
+  private
+    // Основные панели
+    FPanelControl: TPanel;
+    FPanelSheet: TPanel;
+
+    // Панель информации о ячейке
+    FPanelCellInfo: TPanel;
+    FLabelCellAddress: TLabel;
+    FEditCellContent: TEdit;
+
+    // Компоненты fpspreadsheet
+
+    FWorksheetGrid: TsWorksheetGrid;
+    FWorksheetTabControl: TsWorkbookTabControl;
+
+    // Панель инструментов
+    FToolBar: TToolBar;
+
+    // Комбобокс выбора выравнивания текста внутри ячейки
+    FAlignmentCombo: TComboBox;
+    // Флаг: комбобокс выравнивания обновляется программно (не реагировать
+    // на OnChange, чтобы не перезаписывать выравнивание выделенной ячейки)
+    FUpdatingAlignmentCombo: Boolean;
+
+    // Поля размеров ячейки (issue #1359). Одно поле управляет шириной
+    // выделенного столбца, второе — высотой выделенной строки (в мм листа
+    // TsWorksheet). При выделении нескольких столбцов/строк изменение
+    // применяется ко всему выделенному диапазону.
+    FEditColWidthWS: TEdit;     // Ширина столбца в листе (мм)
+    FEditRowHeightWS: TEdit;    // Высота строки в листе (мм)
+    // Флаг: поля размеров обновляются программно (не записывать изменения
+    // обратно в лист при синхронизации с выделенной ячейкой)
+    FUpdatingDimensionFields: Boolean;
+
+    // Действия и построитель панели инструментов по реестру команд
+    FActionList: TActionList;
+    FCommandBar: TSpreadsheetCommandBar;
+
+    // Переменные для отслеживания редактирования ячеек
+    FEditingCell: Boolean;
+    FEditingRow: Cardinal;
+    FEditingCol: Cardinal;
+    FOldCellValue: String;  // Содержимое ячейки до начала редактирования
+    FUndoSavedForCurrentEdit: Boolean;  // Флаг: undo-запись для текущего редактирования уже создана
+
+    // Процедуры создания компонентов
+    procedure CreatePanels;
+    procedure CreateToolBar;
+    procedure CreateAlignmentCombo;
+    procedure CreateDimensionFields;
+    // Вспомогательные конструкторы элементов панели размеров (issue #1359)
+    function CreateToolbarLabel(const ACaption: String): TLabel;
+    function CreateDimensionEdit(const AHint: String): TEdit;
+    procedure CreateSpreadsheetComponents;
+    procedure CreateCellInfoPanel;
+    procedure BuildCommandBar;
+
+    // Обработчик изменения выравнивания через комбобокс
+    procedure OnAlignmentComboChange(Sender: TObject);
+    // Обновляет комбобокс выравнивания по выделенной ячейке
+    procedure UpdateAlignmentCombo;
+
+    // Обновляет поля размеров (ширина столбца/высота строки) по выделенной
+    // ячейке: значения листа и соответствующие значения таблицы ACAD
+    procedure UpdateDimensionFields;
+    // Применяет введённую ширину столбца к листу
+    procedure OnColWidthEditExit(Sender: TObject);
+    procedure OnColWidthKeyPress(Sender: TObject; var Key: Char);
+    // Применяет введённую высоту строки к листу
+    procedure OnRowHeightEditExit(Sender: TObject);
+    procedure OnRowHeightKeyPress(Sender: TObject; var Key: Char);
+    // Записывает ширину столбца / высоту строки из полей в лист
+    procedure ApplyColWidthFromField;
+    procedure ApplyRowHeightFromField;
+    // Возвращает активный лист книги либо nil
+    function GetActiveWorksheet: TsWorksheet;
+
+    // Обработчики событий
+    procedure OnWorksheetGridSelection(Sender: TObject;
+      aCol, aRow: Integer);
+    procedure OnWorksheetGridSelectEditor(Sender: TObject;
+      aCol, aRow: Integer; var Editor: TWinControl);
+    procedure OnWorksheetGridEditingDone(Sender: TObject);
+    procedure OnCellContentEditChange(Sender: TObject);
+    procedure OnCellContentEditExit(Sender: TObject);
+    procedure OnCellContentKeyPress(Sender: TObject; var Key: Char);
+
+  protected
+    procedure DoCreate; override;
+    procedure DoDestroy; override;
+
+  public
+    FWorkbookSource: TsWorkbookSource;
+    { Возвращает источник данных книги }
+    property WorkbookSource: TsWorkbookSource read FWorkbookSource;
+
+    { Возвращает компонент отображения таблицы }
+    property WorksheetGrid: TsWorksheetGrid read FWorksheetGrid;
+
+    { Возвращает список действий для привязки кнопок }
+    property ActionList: TActionList read FActionList;
+
+    { Обновляет отображение информации о текущей ячейке }
+    procedure UpdateCellInfo;
+
+    { Устанавливает содержимое ячейки из поля редактирования }
+    procedure ApplyCellContent;
+
+    { Получает диапазон выделенных ячеек в таблице }
+    function GetSelectedRange(out StartRow, EndRow, StartCol,
+      EndCol: Integer): Boolean;
+  end;
+
+var
+  uzvSpreadsheetForm: TuzvSpreadsheetForm;
+
+implementation
+
+uses
+  uzclog,
+  uzcinterface,
+  uzvspreadsheet_cmdalignment,
+  uzvspreadsheet_dimensions,
+  uzvspreadsheet_cmdundoredo;
+
+{ TuzvSpreadsheetForm }
+
+procedure TuzvSpreadsheetForm.DoCreate;
+begin
+  inherited DoCreate;
+
+  // Инициализация переменных отслеживания редактирования
+  FEditingCell := False;
+  FEditingRow := 0;
+  FEditingCol := 0;
+  FUndoSavedForCurrentEdit := False;
+  FUpdatingAlignmentCombo := False;
+  FUpdatingDimensionFields := False;
+
+  // Настройка основных параметров формы
+  Caption := 'Электронные таблицы / Spreadsheet';
+  Width := 800;
+  Height := 600;
+  Position := poScreenCenter;
+
+  // Создаем компоненты в правильном порядке
+  CreatePanels;
+  CreateToolBar;
+  CreateCellInfoPanel;
+  CreateSpreadsheetComponents;
+  // Панель инструментов строится по реестру команд после создания
+  // компонентов таблицы, чтобы передать их в контекст команд
+  BuildCommandBar;
+  // Комбобокс выравнивания добавляется после кнопок команд, чтобы
+  // располагаться в конце панели инструментов
+  CreateAlignmentCombo;
+  // Поля размеров ячейки (ширина столбца/высота строки) — issue #1359
+  CreateDimensionFields;
+
+  zcUI.TextMessage('Форма электронных таблиц создана', TMWOHistoryOut);
+end;
+
+procedure TuzvSpreadsheetForm.DoDestroy;
+begin
+  // Освобождаем построитель панели инструментов
+  if Assigned(FCommandBar) then
+    FreeAndNil(FCommandBar);
+
+  // Освобождаем менеджер отмены/возврата
+  FreeUndoManager;
+
+  zcUI.TextMessage('Форма электронных таблиц закрыта', TMWOHistoryOut);
+  inherited DoDestroy;
+end;
+
+{ Построение панели инструментов по реестру зарегистрированных команд.
+  Кнопки и действия создаются автоматически для всех команд, добавленных
+  отдельными модулями через RegisterSpreadsheetCommand. Добавление новых
+  команд не требует изменения данного модуля формы. }
+procedure TuzvSpreadsheetForm.BuildCommandBar;
+var
+  Context: TSpreadsheetCommandContext;
+begin
+  // Инициализируем менеджер отмены/возврата для текущей книги
+  InitUndoManager(FWorkbookSource);
+
+  // Формируем контекст выполнения команд
+  Context.WorkbookSource := FWorkbookSource;
+  Context.WorksheetGrid := FWorksheetGrid;
+
+  // Создаём построитель и строим панель инструментов по реестру команд
+  FCommandBar := TSpreadsheetCommandBar.Create(FActionList, FToolBar);
+  FCommandBar.Build(Context);
+end;
+
+{ Создание основных панелей формы }
+procedure TuzvSpreadsheetForm.CreatePanels;
+begin
+  // Верхняя панель управления
+  FPanelControl := TPanel.Create(Self);
+  FPanelControl.Parent := Self;
+  FPanelControl.Align := alTop;
+  FPanelControl.Height := DEFAULT_CONTROL_PANEL_HEIGHT;
+  FPanelControl.BevelOuter := bvNone;
+  FPanelControl.Caption := '';
+
+  // Нижняя панель отображения таблицы
+  FPanelSheet := TPanel.Create(Self);
+  FPanelSheet.Parent := Self;
+  FPanelSheet.Align := alClient;
+  FPanelSheet.BevelOuter := bvNone;
+  FPanelSheet.Caption := '';
+end;
+
+{ Создание пустой панели инструментов.
+  Кнопки команд создаются позднее в BuildCommandBar по реестру команд. }
+procedure TuzvSpreadsheetForm.CreateToolBar;
+begin
+  // Создаем список действий
+  FActionList := TActionList.Create(Self);
+
+  // Создаем панель инструментов
+  FToolBar := TToolBar.Create(Self);
+  FToolBar.Parent := FPanelControl;
+  FToolBar.Align := alClient;
+  FToolBar.ShowCaptions := False;  // Скрываем текст на кнопках
+  FToolBar.Images := ImagesManager.IconList;  // Устанавливаем список иконок
+  FToolBar.ButtonWidth := 28;
+  FToolBar.ButtonHeight := 28;
+end;
+
+{ Создание комбобокса выбора выравнивания текста внутри ячейки.
+  Размещается на панели инструментов после кнопок команд. Показывает текущее
+  выравнивание выделенной ячейки и применяет выбранное выравнивание к
+  выделенному диапазону. }
+procedure TuzvSpreadsheetForm.CreateAlignmentCombo;
+var
+  Separator: TToolButton;
+begin
+  // Разделитель между кнопками команд и комбобоксом выравнивания
+  Separator := TToolButton.Create(FToolBar);
+  Separator.Parent := FToolBar;
+  Separator.Style := tbsSeparator;
+  Separator.Width := 10;
+
+  // Комбобокс выравнивания (только выбор из списка)
+  FAlignmentCombo := TComboBox.Create(Self);
+  FAlignmentCombo.Parent := FToolBar;
+  FAlignmentCombo.Style := csDropDownList;
+  FAlignmentCombo.Width := 180;
+  FAlignmentCombo.Hint := 'Выравнивание текста внутри ячейки';
+  FAlignmentCombo.ShowHint := True;
+  FillAlignmentItems(FAlignmentCombo.Items);
+  FAlignmentCombo.ItemIndex := 0;
+  FAlignmentCombo.OnChange := @OnAlignmentComboChange;
+end;
+
+{ Создаёт на панели инструментов вспомогательную метку. }
+function TuzvSpreadsheetForm.CreateToolbarLabel(
+  const ACaption: String): TLabel;
+begin
+  Result := TLabel.Create(Self);
+  Result.Parent := FToolBar;
+  Result.Caption := ACaption;
+  Result.Layout := tlCenter;
+  Result.AutoSize := False;
+  Result.Width := DIMENSION_LABEL_WIDTH;
+end;
+
+{ Создаёт на панели инструментов редактируемое поле ввода размера.
+  AHint — подсказка. }
+function TuzvSpreadsheetForm.CreateDimensionEdit(const AHint: String): TEdit;
+begin
+  Result := TEdit.Create(Self);
+  Result.Parent := FToolBar;
+  Result.Width := DIMENSION_EDIT_WIDTH;
+  Result.Hint := AHint;
+  Result.ShowHint := True;
+end;
+
+{ Создаёт поля размеров ячейки на панели инструментов (issue #1359).
+  По одному редактируемому полю на ширину столбца и высоту строки (мм листа).
+  При выделении ячейки поля заполняются её размерами; редактирование меняет
+  ширину столбца / высоту строки в листе для всего выделенного диапазона. }
+procedure TuzvSpreadsheetForm.CreateDimensionFields;
+var
+  Separator: TToolButton;
+begin
+  // Разделитель перед группой полей размеров
+  Separator := TToolButton.Create(FToolBar);
+  Separator.Parent := FToolBar;
+  Separator.Style := tbsSeparator;
+  Separator.Width := 10;
+
+  // Поле ширины столбца (мм листа, редактируемое)
+  CreateToolbarLabel('Ширина столбца:');
+  FEditColWidthWS := CreateDimensionEdit(
+    'Ширина столбца в листе (мм). Изменение меняет выделенные столбцы');
+  FEditColWidthWS.OnExit := @OnColWidthEditExit;
+  FEditColWidthWS.OnKeyPress := @OnColWidthKeyPress;
+
+  // Поле высоты строки (мм листа, редактируемое)
+  CreateToolbarLabel('Высота строки:');
+  FEditRowHeightWS := CreateDimensionEdit(
+    'Высота строки в листе (мм). Изменение меняет выделенные строки');
+  FEditRowHeightWS.OnExit := @OnRowHeightEditExit;
+  FEditRowHeightWS.OnKeyPress := @OnRowHeightKeyPress;
+end;
+
+{ Создание панели информации о ячейке }
+procedure TuzvSpreadsheetForm.CreateCellInfoPanel;
+begin
+  // Панель для отображения информации о ячейке
+  FPanelCellInfo := TPanel.Create(Self);
+  FPanelCellInfo.Parent := FPanelSheet;
+  FPanelCellInfo.Align := alTop;
+  FPanelCellInfo.Height := DEFAULT_CELL_INFO_HEIGHT;
+  FPanelCellInfo.BevelOuter := bvNone;
+  FPanelCellInfo.Caption := '';
+
+  // Метка с адресом текущей ячейки
+  FLabelCellAddress := TLabel.Create(Self);
+  FLabelCellAddress.Parent := FPanelCellInfo;
+  FLabelCellAddress.Align := alLeft;
+  FLabelCellAddress.Width := DEFAULT_CELL_ADDRESS_WIDTH;
+  FLabelCellAddress.Caption := 'A1';
+  FLabelCellAddress.Alignment := taCenter;
+  FLabelCellAddress.Layout := tlCenter;
+  FLabelCellAddress.AutoSize := False;
+  FLabelCellAddress.Font.Style := [fsBold];
+
+  // Поле редактирования содержимого ячейки
+  FEditCellContent := TEdit.Create(Self);
+  FEditCellContent.Parent := FPanelCellInfo;
+  FEditCellContent.Align := alClient;
+  FEditCellContent.Text := '';
+  FEditCellContent.OnChange := @OnCellContentEditChange;
+  FEditCellContent.OnExit := @OnCellContentEditExit;
+  FEditCellContent.OnKeyPress := @OnCellContentKeyPress;
+end;
+
+{ Создание компонентов fpspreadsheet }
+procedure TuzvSpreadsheetForm.CreateSpreadsheetComponents;
+begin
+  // Источник данных для книги
+  FWorkbookSource := TsWorkbookSource.Create(Self);
+
+  // Табы для переключения листов книги
+  FWorksheetTabControl := TsWorkbookTabControl.Create(Self);
+  FWorksheetTabControl.Parent := FPanelSheet;
+  FWorksheetTabControl.Align := alBottom;
+  FWorksheetTabControl.Height := 25;
+  FWorksheetTabControl.WorkbookSource := FWorkbookSource;
+
+  // Компонент отображения таблицы
+  FWorksheetGrid := TsWorksheetGrid.Create(Self);
+  FWorksheetGrid.Parent := FPanelSheet;
+  FWorksheetGrid.Align := alClient;
+  FWorksheetGrid.WorkbookSource := FWorkbookSource;
+  FWorksheetGrid.Options := FWorksheetGrid.Options + [goEditing, goColSizing,
+    goRowSizing];
+  FWorksheetGrid.OnSelection := @OnWorksheetGridSelection;
+  FWorksheetGrid.OnSelectEditor := @OnWorksheetGridSelectEditor;
+  FWorksheetGrid.OnEditingDone := @OnWorksheetGridEditingDone;
+
+  // Создаём пустую книгу при запуске
+  FWorkbookSource.CreateNewWorkbook;
+end;
+
+{ Обработчик выбора ячейки в таблице }
+procedure TuzvSpreadsheetForm.OnWorksheetGridSelection(Sender: TObject;
+  aCol, aRow: Integer);
+begin
+  UpdateCellInfo;
+end;
+
+{ Обработчик начала редактирования ячейки в таблице }
+procedure TuzvSpreadsheetForm.OnWorksheetGridSelectEditor(Sender: TObject;
+  aCol, aRow: Integer; var Editor: TWinControl);
+var
+  row, col: Cardinal;
+  worksheet: TsWorksheet;
+  cellAddress: String;
+begin
+  // Вычисляем координаты ячейки (без учёта заголовков)
+  row := aRow - FWorksheetGrid.FixedRows;
+  col := aCol - FWorksheetGrid.FixedCols;
+
+  // Запоминаем координаты редактируемой ячейки
+  FEditingCell := True;
+  FEditingRow := row;
+  FEditingCol := col;
+  FUndoSavedForCurrentEdit := False;
+
+  // Сохраняем текущее значение ячейки для последующего сравнения
+  FOldCellValue := '';
+  if (FWorkbookSource <> nil) and (FWorkbookSource.Workbook <> nil) then
+  begin
+    worksheet := FWorkbookSource.Workbook.ActiveWorksheet;
+    if worksheet <> nil then
+    begin
+      if worksheet.FindCell(row, col) <> nil then
+        FOldCellValue := worksheet.ReadAsText(worksheet.FindCell(row, col));
+
+      // Сохраняем текущее состояние ячейки перед редактированием
+      // BeginChange запоминает ТЕКУЩЕЕ (старое) состояние для возможности отмены
+      if SpreadsheetUndoManager <> nil then
+      begin
+        cellAddress := GetCellString(row, col);
+        SpreadsheetUndoManager.BeginChange(row, col,
+          'Изменение ячейки ' + cellAddress);
+        FUndoSavedForCurrentEdit := True;
+      end;
+    end;
+  end;
+end;
+
+{ Обработчик завершения редактирования ячейки в таблице }
+procedure TuzvSpreadsheetForm.OnWorksheetGridEditingDone(Sender: TObject);
+var
+  worksheet: TsWorksheet;
+  cell: PCell;
+  newCellValue: String;
+begin
+  // Если редактирование завершено, проверяем, изменилось ли содержимое
+  if FEditingCell and (SpreadsheetUndoManager <> nil) then
+  begin
+    if (FWorkbookSource <> nil) and (FWorkbookSource.Workbook <> nil) then
+    begin
+      worksheet := FWorkbookSource.Workbook.ActiveWorksheet;
+      if worksheet <> nil then
+      begin
+        // Получаем новое значение ячейки после редактирования
+        newCellValue := '';
+        cell := worksheet.FindCell(FEditingRow, FEditingCol);
+        if cell <> nil then
+          newCellValue := worksheet.ReadAsText(cell);
+
+        // Если значение НЕ изменилось, отменяем последнюю запись в истории отмены
+        // (она была добавлена в OnWorksheetGridSelectEditor)
+        if newCellValue = FOldCellValue then
+          SpreadsheetUndoManager.CancelLastUndo;
+      end;
+    end;
+  end;
+
+  // Сбрасываем флаги редактирования
+  FEditingCell := False;
+  FUndoSavedForCurrentEdit := False;
+
+  // Обновляем информацию о ячейке в панели редактирования
+  UpdateCellInfo;
+end;
+
+{ Обработчик изменения содержимого поля редактирования }
+procedure TuzvSpreadsheetForm.OnCellContentEditChange(Sender: TObject);
+begin
+  // Ничего не делаем при изменении - применяем только при нажатии Enter или
+  // выходе из поля
+end;
+
+{ Обработчик выхода из поля редактирования }
+procedure TuzvSpreadsheetForm.OnCellContentEditExit(Sender: TObject);
+begin
+  ApplyCellContent;
+end;
+
+{ Обработчик нажатия клавиши в поле редактирования }
+procedure TuzvSpreadsheetForm.OnCellContentKeyPress(Sender: TObject;
+  var Key: Char);
+begin
+  // При нажатии Enter применяем содержимое
+  if Key = #13 then
+  begin
+    ApplyCellContent;
+    Key := #0;
+    FWorksheetGrid.SetFocus;
+  end;
+end;
+
+{ Обновление информации о текущей ячейке }
+procedure TuzvSpreadsheetForm.UpdateCellInfo;
+var
+  worksheet: TsWorksheet;
+  cell: PCell;
+  cellAddress: String;
+  cellContent: String;
+  row, col: Cardinal;
+begin
+  if (FWorkbookSource = nil) or (FWorkbookSource.Workbook = nil) then
+    Exit;
+
+  worksheet := FWorkbookSource.Workbook.ActiveWorksheet;
+  if worksheet = nil then
+    Exit;
+
+  // Получаем координаты выделенной ячейки
+  row := FWorksheetGrid.Row - FWorksheetGrid.FixedRows;
+  col := FWorksheetGrid.Col - FWorksheetGrid.FixedCols;
+
+  // Формируем адрес ячейки (например, A1, B2)
+  cellAddress := GetCellString(row, col);
+  FLabelCellAddress.Caption := cellAddress;
+
+  // Получаем содержимое ячейки
+  cell := worksheet.FindCell(row, col);
+  if cell <> nil then
+  begin
+    // Если есть формула - показываем формулу, иначе значение
+    cellContent := worksheet.ReadFormulaAsString(cell);
+    if cellContent = '' then
+      cellContent := worksheet.ReadAsText(cell);
+  end
+  else
+    cellContent := '';
+
+  FEditCellContent.Text := cellContent;
+
+  // Синхронизируем комбобокс выравнивания с выделенной ячейкой
+  UpdateAlignmentCombo;
+
+  // Синхронизируем поля размеров (ширина столбца/высота строки)
+  UpdateDimensionFields;
+end;
+
+{ Обновление комбобокса выравнивания по выделенной ячейке }
+procedure TuzvSpreadsheetForm.UpdateAlignmentCombo;
+var
+  index: Integer;
+begin
+  if FAlignmentCombo = nil then
+    Exit;
+
+  index := GetActiveCellAlignmentIndex(FWorkbookSource, FWorksheetGrid);
+
+  // Устанавливаем индекс программно, не вызывая обработчик OnChange
+  FUpdatingAlignmentCombo := True;
+  try
+    FAlignmentCombo.ItemIndex := index;
+  finally
+    FUpdatingAlignmentCombo := False;
+  end;
+end;
+
+{ Обработчик изменения выравнивания через комбобокс }
+procedure TuzvSpreadsheetForm.OnAlignmentComboChange(Sender: TObject);
+begin
+  // Игнорируем программное обновление индекса (синхронизация с ячейкой)
+  if FUpdatingAlignmentCombo then
+    Exit;
+
+  if FAlignmentCombo = nil then
+    Exit;
+
+  ApplyAlignmentToSelection(FWorkbookSource, FWorksheetGrid,
+    FAlignmentCombo.ItemIndex);
+
+  // Принудительно перерисовываем таблицу, чтобы изменения стали видны
+  if FWorksheetGrid <> nil then
+  begin
+    FWorksheetGrid.Invalidate;
+    FWorksheetGrid.SetFocus;
+  end;
+end;
+
+{ Возвращает активный лист книги либо nil, если он недоступен. }
+function TuzvSpreadsheetForm.GetActiveWorksheet: TsWorksheet;
+begin
+  Result := nil;
+  if (FWorkbookSource = nil) or (FWorkbookSource.Workbook = nil) then
+    Exit;
+  Result := FWorkbookSource.Workbook.ActiveWorksheet;
+end;
+
+{ Обновление полей размеров (ширина столбца/высота строки) по активной
+  ячейке выделения: поля заполняются её шириной столбца и высотой строки
+  в миллиметрах листа. }
+procedure TuzvSpreadsheetForm.UpdateDimensionFields;
+var
+  worksheet: TsWorksheet;
+  row, col: Integer;
+  widthMM, heightMM: Double;
+begin
+  if (FEditColWidthWS = nil) or (FEditRowHeightWS = nil) then
+    Exit;
+
+  worksheet := GetActiveWorksheet;
+  if worksheet = nil then
+    Exit;
+
+  col := FWorksheetGrid.Col - FWorksheetGrid.FixedCols;
+  row := FWorksheetGrid.Row - FWorksheetGrid.FixedRows;
+
+  widthMM := GetWorksheetColWidthMM(worksheet, col);
+  heightMM := GetWorksheetRowHeightMM(worksheet, row);
+
+  // Обновляем поля программно, чтобы OnExit не записывал значения обратно
+  FUpdatingDimensionFields := True;
+  try
+    FEditColWidthWS.Text := Format(DIMENSION_VALUE_FORMAT, [widthMM]);
+    FEditRowHeightWS.Text := Format(DIMENSION_VALUE_FORMAT, [heightMM]);
+  finally
+    FUpdatingDimensionFields := False;
+  end;
+end;
+
+{ Разбирает введённый размер из поля. Принимает запятую и точку как
+  десятичный разделитель. Возвращает False, если значение некорректно. }
+function ParseDimensionValue(const AText: String; out AValue: Double): Boolean;
+var
+  normalized: String;
+  fmt: TFormatSettings;
+begin
+  fmt := DefaultFormatSettings;
+  fmt.DecimalSeparator := '.';
+  normalized := StringReplace(Trim(AText), ',', '.', [rfReplaceAll]);
+  Result := TryStrToFloat(normalized, AValue, fmt);
+end;
+
+{ Записывает ширину столбца из поля FEditColWidthWS в лист (issue #1359).
+  Изменение применяется ко всем выделенным столбцам; если выделение
+  недоступно, к столбцу активной ячейки. }
+procedure TuzvSpreadsheetForm.ApplyColWidthFromField;
+var
+  worksheet: TsWorksheet;
+  startRow, endRow, startCol, endCol: Integer;
+  changedCount: Integer;
+  widthMM: Double;
+begin
+  if FUpdatingDimensionFields or (FEditColWidthWS = nil) then
+    Exit;
+
+  worksheet := GetActiveWorksheet;
+  if worksheet = nil then
+    Exit;
+
+  if not ParseDimensionValue(FEditColWidthWS.Text, widthMM) then
+  begin
+    UpdateDimensionFields;  // Восстанавливаем корректное значение
+    Exit;
+  end;
+
+  // Диапазон выделенных столбцов; при недоступном выделении — активный столбец
+  if not GetSelectedRange(startRow, endRow, startCol, endCol) then
+  begin
+    startCol := FWorksheetGrid.Col - FWorksheetGrid.FixedCols;
+    endCol := startCol;
+  end;
+
+  changedCount := SetWorksheetColWidthsMM(worksheet, startCol, endCol, widthMM);
+  if changedCount > 0 then
+  begin
+    programlog.LogOutFormatStr(
+      'Spreadsheet: ширина столбцов %d..%d изменена на %.2f мм (%d шт.)',
+      [startCol, endCol, widthMM, changedCount], LM_Info);
+    if FWorksheetGrid <> nil then
+      FWorksheetGrid.Invalidate;
+  end;
+
+  UpdateDimensionFields;  // Возвращаем отформатированное значение в поле
+end;
+
+{ Записывает высоту строки из поля FEditRowHeightWS в лист (issue #1359).
+  Изменение применяется ко всем выделенным строкам; если выделение
+  недоступно, к строке активной ячейки. }
+procedure TuzvSpreadsheetForm.ApplyRowHeightFromField;
+var
+  worksheet: TsWorksheet;
+  startRow, endRow, startCol, endCol: Integer;
+  changedCount: Integer;
+  heightMM: Double;
+begin
+  if FUpdatingDimensionFields or (FEditRowHeightWS = nil) then
+    Exit;
+
+  worksheet := GetActiveWorksheet;
+  if worksheet = nil then
+    Exit;
+
+  if not ParseDimensionValue(FEditRowHeightWS.Text, heightMM) then
+  begin
+    UpdateDimensionFields;  // Восстанавливаем корректное значение
+    Exit;
+  end;
+
+  // Диапазон выделенных строк; при недоступном выделении — активная строка
+  if not GetSelectedRange(startRow, endRow, startCol, endCol) then
+  begin
+    startRow := FWorksheetGrid.Row - FWorksheetGrid.FixedRows;
+    endRow := startRow;
+  end;
+
+  changedCount := SetWorksheetRowHeightsMM(worksheet, startRow, endRow, heightMM);
+  if changedCount > 0 then
+  begin
+    programlog.LogOutFormatStr(
+      'Spreadsheet: высота строк %d..%d изменена на %.2f мм (%d шт.)',
+      [startRow, endRow, heightMM, changedCount], LM_Info);
+    if FWorksheetGrid <> nil then
+    begin
+      // TsWorksheetGrid не перестраивает высоту строки по уведомлению при
+      // программной записи WriteRowHeight: его обработчик lniRow обновляет
+      // строку только для НЕ-rhtCustom строк (см. fpspreadsheetgrid.pas,
+      // ListenerNotification), а WriteRowHeight как раз помечает строку
+      // rhtCustom. Поэтому, в отличие от ширины столбца (lniCol всегда
+      // вызывает UpdateColWidth), высота визуально не менялась. Принудительно
+      // пересчитываем высоты строк сетки из записей листа (issue #1359).
+      FWorksheetGrid.UpdateRowHeights;
+      FWorksheetGrid.Invalidate;
+    end;
+  end;
+
+  UpdateDimensionFields;  // Возвращаем отформатированное значение в поле
+end;
+
+{ Обработчик выхода из поля ширины столбца }
+procedure TuzvSpreadsheetForm.OnColWidthEditExit(Sender: TObject);
+begin
+  ApplyColWidthFromField;
+end;
+
+{ Обработчик нажатия клавиши в поле ширины столбца }
+procedure TuzvSpreadsheetForm.OnColWidthKeyPress(Sender: TObject;
+  var Key: Char);
+begin
+  if Key = #13 then
+  begin
+    ApplyColWidthFromField;
+    Key := #0;
+    if FWorksheetGrid <> nil then
+      FWorksheetGrid.SetFocus;
+  end;
+end;
+
+{ Обработчик выхода из поля высоты строки }
+procedure TuzvSpreadsheetForm.OnRowHeightEditExit(Sender: TObject);
+begin
+  ApplyRowHeightFromField;
+end;
+
+{ Обработчик нажатия клавиши в поле высоты строки }
+procedure TuzvSpreadsheetForm.OnRowHeightKeyPress(Sender: TObject;
+  var Key: Char);
+begin
+  if Key = #13 then
+  begin
+    ApplyRowHeightFromField;
+    Key := #0;
+    if FWorksheetGrid <> nil then
+      FWorksheetGrid.SetFocus;
+  end;
+end;
+
+{ Применение содержимого из поля редактирования к ячейке }
+procedure TuzvSpreadsheetForm.ApplyCellContent;
+var
+  worksheet: TsWorksheet;
+  row, col: Cardinal;
+  content: String;
+  cellAddress: String;
+  cell: PCell;
+  oldContent: String;
+begin
+  if (FWorkbookSource = nil) or (FWorkbookSource.Workbook = nil) then
+    Exit;
+
+  worksheet := FWorkbookSource.Workbook.ActiveWorksheet;
+  if worksheet = nil then
+    Exit;
+
+  // Получаем координаты выделенной ячейки
+  row := FWorksheetGrid.Row - FWorksheetGrid.FixedRows;
+  col := FWorksheetGrid.Col - FWorksheetGrid.FixedCols;
+
+  content := FEditCellContent.Text;
+
+  // Получаем текущее содержимое ячейки для сравнения
+  oldContent := '';
+  cell := worksheet.FindCell(row, col);
+  if cell <> nil then
+    oldContent := worksheet.ReadAsText(cell);
+
+  // Проверяем, действительно ли содержимое изменилось
+  if content = oldContent then
+    Exit; // Нет изменений - ничего не делаем
+
+  // Сохраняем текущее состояние ячейки для возможности отмены
+  // Только если ещё не создали undo-запись для этой ячейки
+  // Проверяем, редактируем ли мы ту же ячейку, для которой уже сохранили undo
+  cellAddress := GetCellString(row, col);
+  if SpreadsheetUndoManager <> nil then
+  begin
+    // Если это новая ячейка или ещё не сохраняли undo для текущей ячейки
+    if (not FUndoSavedForCurrentEdit) or
+       (row <> FEditingRow) or (col <> FEditingCol) then
+    begin
+      SpreadsheetUndoManager.BeginChange(row, col,
+        'Изменение ячейки ' + cellAddress);
+      FUndoSavedForCurrentEdit := True;
+      FEditingRow := row;
+      FEditingCol := col;
+    end;
+  end;
+
+  // Если начинается с "=" - это формула
+  if (Length(content) > 0) and (content[1] = '=') then
+    worksheet.WriteFormula(row, col, Copy(content, 2, Length(content) - 1))
+  else
+    worksheet.WriteText(row, col, content);
+end;
+
+{ Получает диапазон выделенных ячеек в таблице }
+function TuzvSpreadsheetForm.GetSelectedRange(out StartRow, EndRow, StartCol,
+  EndCol: Integer): Boolean;
+var
+  Selection: TGridRect;
+begin
+  Result := False;
+  StartRow := 0;
+  EndRow := 0;
+  StartCol := 0;
+  EndCol := 0;
+
+  if FWorksheetGrid = nil then
+    Exit;
+
+  // Получаем выделенный диапазон из компонента таблицы
+  Selection := FWorksheetGrid.Selection;
+
+  // Преобразуем координаты с учётом фиксированных строк и колонок
+  StartRow := Selection.Top - FWorksheetGrid.FixedRows;
+  EndRow := Selection.Bottom - FWorksheetGrid.FixedRows;
+  StartCol := Selection.Left - FWorksheetGrid.FixedCols;
+  EndCol := Selection.Right - FWorksheetGrid.FixedCols;
+
+  // Проверяем валидность диапазона
+  if (StartRow >= 0) and (EndRow >= StartRow) and
+     (StartCol >= 0) and (EndCol >= StartCol) then
+    Result := True;
+end;
+
+end.
